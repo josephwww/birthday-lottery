@@ -44,7 +44,7 @@
 
     <!-- 控制按钮 -->
     <div class="controls">
-      <button @click="generatePairs" :disabled="isRunning">生成配对</button>
+      <button @click="startLottery" :disabled="isRunning">开始抽奖</button>
     </div>
 
     <!-- 编辑区域 -->
@@ -62,8 +62,10 @@
 <script>
 export default {
   data() {
+    // 从localStorage加载初始数据
+    const savedPeople = localStorage.getItem('gift-exchange-people');
     return {
-      people: [
+      people: savedPeople ? JSON.parse(savedPeople) : [
         { name: '张三' },
         { name: '李四' },
         { name: '王五' }
@@ -73,6 +75,25 @@ export default {
       showAlgorithm: false
     }
   },
+  watch: {
+    // 深度监听people数组变化
+    people: {
+      handler(newVal) {
+        localStorage.setItem('gift-exchange-people', JSON.stringify(newVal));
+      },
+      deep: true
+    }
+  },
+  created() {
+    // 加载时验证本地存储数据
+    try {
+      const data = localStorage.getItem('gift-exchange-people');
+      if (data) this.people = JSON.parse(data);
+    } catch (e) {
+      console.error('本地存储数据解析失败，使用默认数据', e);
+      localStorage.removeItem('gift-exchange-people');
+    }
+  },
   methods: {
     addPerson() {
       this.people.push({ name: '新参与者' });
@@ -80,34 +101,81 @@ export default {
     removePerson(index) {
       this.people.splice(index, 1);
     },
-    generatePairs() {
+    async startLottery() {
       if (this.isRunning) return;
       this.isRunning = true;
+      this.pairs = [];
       
-      const createDerangement = (n) => {
-        let arr = [...Array(n).keys()];
-        let attempts = 0;
-        
-        while (attempts++ < 100) { // 安全阀
-          // Fisher-Yates洗牌算法
-          for (let i = n - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [arr[i], arr[j]] = [arr[j], arr[i]];
-          }
-          
-          // 检查是否满足无自配对且全排列
-          const isValid = arr.every((val, idx) => val !== idx) 
-            && new Set(arr).size === n;
-          
-          if (isValid) return arr;
-        }
-        return arr; // 超过尝试次数返回最佳结果
-      };
+      // 初始化占位符数组
+      const derangement = this.createDerangement(this.people.length);
+      const placeholderPairs = this.people.map((_, index) => ({
+        left: index,
+        right: -1,      // -1表示未抽中
+        revealed: false // 是否已揭示
+      }));
+      this.pairs = placeholderPairs;
 
-      const derangement = createDerangement(this.people.length);
-      this.pairs = derangement.map((right, left) => ({ left, right }));
+      // 逐个揭示结果
+      for (let i = 0; i < this.people.length; i++) {
+        // 当前项停止动画
+        this.pairs[i].right = derangement[i];
+        this.pairs[i].revealed = true;
+        
+        // 其他项继续动画
+        if (i < this.people.length - 1) {
+          await this.animateOthers(i + 1, 800); // 800ms动画时间
+        }
+      }
       
       this.isRunning = false;
+    },
+
+    animateOthers(startIndex, duration) {
+      return new Promise(resolve => {
+        const startTime = Date.now();
+        const animate = () => {
+          const progress = Date.now() - startTime;
+          
+          // 仅更新未揭示的项目
+          this.pairs = this.pairs.map((pair, index) => {
+            if (index >= startIndex && !pair.revealed) {
+              return {
+                ...pair,
+                right: progress % 200 < 100 ? 
+                  Math.floor(Math.random() * this.people.length) : -1
+              };
+            }
+            return pair;
+          });
+
+          if (progress < duration) {
+            requestAnimationFrame(animate);
+          } else {
+            resolve();
+          }
+        };
+        requestAnimationFrame(animate);
+      });
+    },
+
+    createDerangement(n) {
+      let arr = [...Array(n).keys()];
+      let attempts = 0;
+      
+      while (attempts++ < 100) { // 安全阀
+        // Fisher-Yates洗牌算法
+        for (let i = n - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        
+        // 检查是否满足无自配对且全排列
+        const isValid = arr.every((val, idx) => val !== idx) 
+          && new Set(arr).size === n;
+        
+        if (isValid) return arr;
+      }
+      return arr; // 超过尝试次数返回最佳结果
     }
   }
 }
@@ -147,7 +215,7 @@ export default {
   min-width: 120px;
   text-align: center;
   background: #f8f8f8;
-  transition: background 0.3s;
+  transition: all 0.3s;
 }
 
 .pair-item::after {
@@ -285,6 +353,44 @@ button:disabled {
   .header-section {
     flex-direction: column;
     gap: 10px;
+  }
+}
+
+/* 添加揭示动画 */
+.pair-item {
+  transition: all 0.3s;
+}
+
+/* 未揭示项目的样式 */
+.pair-item:not(.revealed) {
+  animation: shake 0.3s ease-in-out infinite alternate;
+}
+
+@keyframes shake {
+  0% { transform: translateX(-2px); }
+  100% { transform: translateX(2px); }
+}
+
+/* 已揭示项目的样式 */
+.revealed .right-item {
+  color: #338a6e;
+  font-weight: bold;
+  background: rgba(66, 185, 131, 0.1);
+}
+
+/* 礼物图标动画 */
+.revealed .pair-item::before {
+  animation: giftReveal 0.6s ease-out forwards;
+}
+
+@keyframes giftReveal {
+  0% {
+    opacity: 1;
+    transform: scale(1.5) rotate(-15deg);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0) rotate(45deg);
   }
 }
 </style>
